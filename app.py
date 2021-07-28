@@ -1,20 +1,21 @@
 import flask
 import requests
 import json
+import sys
+import os
+sys.path.append(os.path.abspath("."))
 import random
 import base64
-from .secrets import (
-	SPOTIFY_CLIENT_ID,
-	SPOTIFY_CLIENT_SECRET,
-	GENIUS_AUTH_TOKEN,
-)
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
 app = flask.Flask(__name__)
 
 
 MARKET = "US"
 
 def get_access_token():
-	auth = base64.standard_b64encode(bytes(f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}", "utf-8")).decode("utf-8")
+	auth = base64.standard_b64encode(bytes(f"{os.getenv('SPOTIFY_CLIENT_ID')}:{os.getenv('SPOTIFY_CLIENT_SECRET')}", "utf-8")).decode("utf-8")
 	response = requests.post(
 		"https://accounts.spotify.com/api/token",
 		headers={"Authorization": f"Basic {auth}"},
@@ -48,7 +49,7 @@ def index():
 
 	genius_response = requests.get(
 		"https://api.genius.com/search",
-		headers={"Authorization": f"Bearer {GENIUS_AUTH_TOKEN}"},
+		headers={"Authorization": f"Bearer {os.getenv('GENIUS_AUTH_TOKEN')}"},
 		params={"q": song_name}
 	)
 	genius_response_json = genius_response.json()
