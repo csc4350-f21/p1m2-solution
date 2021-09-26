@@ -1,18 +1,64 @@
 import flask
+from flask_login.utils import login_required
 import requests
-import json
-import sys
 import os
-sys.path.append(os.path.abspath("."))
+
 import random
 import base64
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
-app = flask.Flask(__name__)
+from genius import get_lyrics_link
+from spotify import get_access_token, get_song_data
 
+from flask_login import login_user, current_user, LoginManager
+from flask_sqlalchemy import SQLAlchemy
+
+app = flask.Flask(__name__)
+# Point SQLAlchemy to your Heroku database
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+# Gets rid of a warning
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = b'_5#y2L"F4Q8z\n\xec]/'
+
+from flask_login import UserMixin
+
+db = SQLAlchemy(app)
+
+class User(UserMixin, db.Model):
+	id = db.Column(db.Integer, primary_key=True)
+	username = db.Column(db.String(80))
+
+	def __repr__(self):
+		return f"<User {self.username}>"
+
+	def get_username(self):
+		return self.username
+
+class Artist(db.Model):
+	id = db.Column(db.Integer, primary_key=True)
+	artist_id = db.Column(db.String(80), nullable=False)
+	username = db.Column(db.String(80), nullable=False)
+
+	def __repr__(self):
+		return f"<Artist {self.artist_id}>"
+
+db.create_all()
+login_manager = LoginManager()
+login_manager.login_view = 'login'
+login_manager.init_app(app)
+
+
+@login_manager.user_loader
+def load_user(user_name):
+	return User.query.get(user_name)
 
 MARKET = "US"
+ARTIST_IDS = [
+	"4UXqAaa6dQYAk18Lv7PEgX",  # FOB
+	"3jOstUTkEu2JkjvRdBA5Gu",  # Weezer
+	"7oPftvlwr6VrsViSDV7fJY",  # Green Day
+]
 
 def get_access_token():
 	auth = base64.standard_b64encode(bytes(f"{os.getenv('SPOTIFY_CLIENT_ID')}:{os.getenv('SPOTIFY_CLIENT_SECRET')}", "utf-8")).decode("utf-8")
@@ -24,39 +70,83 @@ def get_access_token():
 	json_response = response.json()
 	return json_response["access_token"]
 
+@app.route('/signup')
+def signup():
+	return flask.render_template("signup.html")
+
+@app.route('/signup', methods=["POST"])
+def signup_post():
+	username = flask.request.form.get('username')
+	user = User.query.filter_by(username=username).first()
+	if user:
+		pass
+	else:
+		user = User(username=username)
+		db.session.add(user)
+		db.session.commit()
+	
+	return flask.redirect(flask.url_for('login'))
+
+@app.route('/login')
+def login():
+	return flask.render_template("login.html")
+
+@app.route('/login', methods=["POST"])
+def login_post():
+	username = flask.request.form.get('username')
+	user = User.query.filter_by(username=username).first()
+	if user:
+		login_user(user)
+		return flask.redirect(flask.url_for('index'))
+
+	else:
+		return flask.jsonify(
+			{"status": 401,"reason": "Username or Password Error"}
+		)
+
+@app.route('/save', methods=["POST"])
+def save():
+	artist_id = flask.request.form.get('artist_id')
+	try:
+		access_token = get_access_token()
+		get_song_data(artist_id, access_token)
+	except Exception:
+		flask.flash("Invalid artist ID entered")
+		return flask.redirect(flask.url_for('index'))
+
+	username = current_user.username
+	db.session.add(Artist(artist_id=artist_id, username=username))
+	db.session.commit()
+	return flask.redirect(flask.url_for('index'))
+
+
 @app.route('/')
+def main():
+	if current_user.is_authenticated:
+		return flask.redirect(flask.url_for('index'))
+	return flask.redirect(flask.url_for('login'))
+
+@app.route('/index')
+@login_required
 def index():
-	access_token = get_access_token()
+	artists = Artist.query.filter_by(username=current_user.username).all()
+	artist_ids = [a.artist_id for a in artists]
+	print(artist_ids)
+	has_artists_saved = len(artist_ids) > 0
+	if has_artists_saved:
+		artist_id = random.choice(artist_ids)
 
-	artist_ids = [
-		"4UXqAaa6dQYAk18Lv7PEgX",  # FOB
-		"3jOstUTkEu2JkjvRdBA5Gu",  # Weezer
-		"7oPftvlwr6VrsViSDV7fJY",  # Green Day
-	]
-	artist_id = random.choice(artist_ids)
+		# API calls
+		access_token = get_access_token()
+		(song_name, song_artist, song_image_url, preview_url) = get_song_data(artist_id, access_token)
+		genius_url = get_lyrics_link(song_name)
 
-	response = requests.get(
-		f"https://api.spotify.com/v1/artists/{artist_id}/top-tracks",
-		headers={"Authorization": f"Bearer {access_token}"},
-		params={"market": MARKET}
-	)
-	json_response = response.json()
-	track_json = random.choice(json_response["tracks"])
-	song_name = track_json["name"]
-	song_artist = ", ".join([artist["name"] for artist in track_json["artists"]])
-	song_image_url = track_json["album"]["images"][0]["url"]
-	preview_url = track_json["preview_url"]
-
-	genius_response = requests.get(
-		"https://api.genius.com/search",
-		headers={"Authorization": f"Bearer {os.getenv('GENIUS_AUTH_TOKEN')}"},
-		params={"q": song_name}
-	)
-	genius_response_json = genius_response.json()
-	genius_url = genius_response_json["response"]["hits"][0]["result"]["url"]
+	else:
+		(song_name, song_artist, song_image_url, preview_url, genius_url) = (None, None, None, None, None)
 
 	return flask.render_template(
     	"index.html",
+		has_artists_saved=has_artists_saved,
     	song_name=song_name,
     	song_artist=song_artist,
     	song_image_url=song_image_url,
@@ -64,8 +154,9 @@ def index():
     	genius_url=genius_url
     )
 
-app.run(
-	host=os.getenv('IP', '0.0.0.0'),
-    port=int(os.getenv('PORT', 8080)),
-    debug=True
-)
+if __name__ == "__main__":
+	app.run(
+		host=os.getenv('IP', '0.0.0.0'),
+		port=int(os.getenv('PORT', 8080)),
+		debug=True
+	)
