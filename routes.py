@@ -1,4 +1,4 @@
-from app import app
+from app import app, db
 from models import User, Artist
 import os
 from genius import get_lyrics_link
