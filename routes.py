@@ -23,14 +23,6 @@ def load_user(user_name):
     return User.query.get(user_name)
 
 
-MARKET = "US"
-ARTIST_IDS = [
-    "4UXqAaa6dQYAk18Lv7PEgX",  # FOB
-    "3jOstUTkEu2JkjvRdBA5Gu",  # Weezer
-    "7oPftvlwr6VrsViSDV7fJY",  # Green Day
-]
-
-
 def get_access_token():
     auth = base64.standard_b64encode(
         bytes(
